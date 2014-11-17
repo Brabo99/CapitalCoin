@@ -146,7 +146,7 @@ public:
     // Adds an encrypted key to the store, and saves it to disk.
     bool AddCryptedKey(const CPubKey &vchPubKey, const std::vector<unsigned char> &vchCryptedSecret);
     // Adds an encrypted key to the store, without saving it to disk (used by LoadWallet)
-    bool LoadCryptedKey(const CPubKey &vchPubKey, const std::vector<unsigned char> &vchCryptedSecret) { SetMinVersion(FEATURE_WALLETCRYPT); return CCryptoKeyStore::AddCryptedKey(vchPubKey, vchCryptedSecret); }
+    bool LoadCryptedKey(const CPubKey &vchPubKey, const std::vector<unsigned char> &vchCryptedSecret);
     bool AddCScript(const CScript& redeemScript);
     bool LoadCScript(const CScript& redeemScript) { return CCryptoKeyStore::AddCScript(redeemScript); }
 
@@ -174,7 +174,7 @@ public:
     bool AddToWallet(const CWalletTx& wtxIn);
     bool AddToWalletIfInvolvingMe(const CTransaction& tx, const CBlock* pblock, bool fUpdate = false, bool fFindBlock = false);
     bool EraseFromWallet(uint256 hash);
-    void WalletUpdateSpent(const CTransaction& prevout);
+    void WalletUpdateSpent(const CTransaction& prevout, bool fBlock = false);
     int ScanForWalletTransactions(CBlockIndex* pindexStart, bool fUpdate = false);
     int ScanForWalletTransaction(const uint256& hashTx);
     void ReacceptWalletTransactions();

@@ -21,11 +21,14 @@ extern const std::string CLIENT_NAME;
 extern const std::string CLIENT_BUILD;
 extern const std::string CLIENT_DATE;
 
+// database version
+static const int DATABASE_VERSION = 70001;
+
 //
 // network protocol versioning
 //
 
-static const int PROTOCOL_VERSION = 70004;
+static const int PROTOCOL_VERSION = 70005;
 
 // earlier versions not supported as of Feb 2012, and are disconnected
 static const int MIN_PROTO_VERSION = 60008;
@@ -45,8 +48,8 @@ static const int BIP0031_VERSION = 60000;
 static const int MEMPOOL_GD_VERSION = 60002;
 
 #define DISPLAY_VERSION_MAJOR       1
-#define DISPLAY_VERSION_MINOR       4
-#define DISPLAY_VERSION_REVISION    2
+#define DISPLAY_VERSION_MINOR       5
+#define DISPLAY_VERSION_REVISION    0
 #define DISPLAY_VERSION_BUILD       1
 
 #endif

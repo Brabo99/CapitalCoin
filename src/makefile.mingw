@@ -4,6 +4,7 @@
 
 USE_UPNP:=0
 USE_IPV6:=1
+USE_LEVELDB:=1
 
 BOOST_SUFFIX?=-mgw49-mt-s-1_55
 
@@ -87,11 +88,26 @@ OBJS= \
     obj/noui.o \
     obj/kernel.o \
     obj/pbkdf2.o \
-    obj/scrypt_mine.o \
+    obj/scrypt.o \
     obj/scrypt-x86.o \
     obj/scrypt-x86_64.o
 
 all: CapitalCoind.exe
+
+#
+# LevelDB support
+#
+ifneq (${USE_LEVELDB}, -)
+LIBS += $(CURDIR)/leveldb/libleveldb.a $(CURDIR)/leveldb/libmemenv.a
+DEFS += $(addprefix -I,$(CURDIR)/leveldb/include) -DUSE_LEVELDB
+DEFS += $(addprefix -I,$(CURDIR)/leveldb/helpers)
+OBJS += obj/txdb-leveldb.o
+leveldb/libleveldb.a:
+ cd leveldb; make; cd ..
+obj/txdb-leveldb.o: leveldb/libleveldb.lib
+else
+OBJS += obj/txdb-bdb.o
+endif
 
 test check: test_CapitalCoin.exe FORCE
 	test_CapitalCoin.exe

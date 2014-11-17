@@ -9,7 +9,7 @@
 #include "sync.h"
 #include "net.h"
 #include "script.h"
-#include "scrypt_mine.h"
+#include "scrypt.h"
 
 #include <list>
 
@@ -50,6 +50,11 @@ inline bool MoneyRange(int64 nValue) { return (nValue >= 0 && nValue <= MAX_MONE
 // Threshold for nLockTime: below this value it is interpreted as block number, otherwise as UNIX timestamp.
 static const unsigned int LOCKTIME_THRESHOLD = 500000000; // Tue Nov  5 00:53:20 1985 UTC
 
+#ifdef USE_UPNP
+static const int fHaveUPnP = true;
+#else
+static const int fHaveUPnP = false;
+#endif
 
 static const uint256 hashGenesisBlockOfficial("0x0000027f43dc7ba9c33a092198542c53be53765d5c8021fbe003b4d23dd6222f");
 static const uint256 hashGenesisBlockTestNet("0x00008d06a875c1ea571f4f381eb65319bd4225e451b1b4ed62cf5e007a9ad462");
@@ -86,6 +91,7 @@ extern std::map<uint256, CBlock*> mapOrphanBlocks;
 
 // Settings
 extern int64 nTransactionFee;
+extern bool fUseFastIndex;
 extern int64 nMinimumInputValue;
 
 extern bool fEnforceCanonical;
@@ -110,8 +116,12 @@ void PrintBlockTree();
 CBlockIndex* FindBlockByHeight(int nHeight);
 bool ProcessMessages(CNode* pfrom);
 bool SendMessages(CNode* pto, bool fSendTrickle);
-bool LoadExternalBlockFile(FILE* fileIn);
-void GenerateBitcoins(bool fGenerate, CWallet* pwallet);
+
+// Processes a blk*.dat file and fires the given signal to indicate how far
+// through the file the load has reached, if provided.
+typedef boost::signals2::signal<void (unsigned int bytesRead)> ExternalBlockFileProgress;
+bool LoadExternalBlockFile(FILE* fileIn, ExternalBlockFileProgress *progress=NULL);
+
 CBlock* CreateNewBlock(CWallet* pwallet, bool fProofOfStake=false);
 void IncrementExtraNonce(CBlock* pblock, CBlockIndex* pindexPrev, unsigned int& nExtraNonce);
 void FormatHashBuffers(CBlock* pblock, char* pmidstate, char* pdata, char* phash1);
@@ -127,7 +137,7 @@ std::string GetWarnings(std::string strFor);
 bool GetTransaction(const uint256 &hash, CTransaction &tx, uint256 &hashBlock);
 uint256 WantedByOrphan(const CBlock* pblockOrphan);
 const CBlockIndex* GetLastBlockIndex(const CBlockIndex* pindex, bool fProofOfStake);
-void BitcoinMiner(CWallet *pwallet, bool fProofOfStake);
+void StakeMiner(CWallet *pwallet);
 void ResendWalletTransactions(bool fForce = false);
 
 
@@ -544,7 +554,7 @@ public:
     bool IsStandard() const;
 
     /** Check for standard transaction types
-        @param[in] mapInputs    Map of previous transactions that have outputs we're spending
+        @param[in] mapInputs	Map of previous transactions that have outputs we're spending
         @return True if all inputs (scriptSigs) use only standard transaction forms
         @see CTransaction::FetchInputs
     */
@@ -558,7 +568,7 @@ public:
 
     /** Count ECDSA signature operations in pay-to-script-hash inputs.
 
-        @param[in] mapInputs    Map of previous transactions that have outputs we're spending
+        @param[in] mapInputs	Map of previous transactions that have outputs we're spending
         @return maximum number of sigops required to validate this transaction's inputs
         @see CTransaction::FetchInputs
      */
@@ -677,13 +687,13 @@ public:
 
     /** Fetch from memory and/or disk. inputsRet keys are transaction hashes.
 
-     @param[in] txdb    Transaction database
-     @param[in] mapTestPool List of pending changes to the transaction index database
-     @param[in] fBlock  True if being called to add a new best-block to the chain
-     @param[in] fMiner  True if being called by CreateNewBlock
-     @param[out] inputsRet  Pointers to this transaction's inputs
-     @param[out] fInvalid   returns true if transaction is invalid
-     @return    Returns true if all inputs are in txdb or mapTestPool
+     @param[in] txdb	Transaction database
+     @param[in] mapTestPool	List of pending changes to the transaction index database
+     @param[in] fBlock	True if being called to add a new best-block to the chain
+     @param[in] fMiner	True if being called by CreateNewBlock
+     @param[out] inputsRet	Pointers to this transaction's inputs
+     @param[out] fInvalid	returns true if transaction is invalid
+     @return	Returns true if all inputs are in txdb or mapTestPool
      */
     bool FetchInputs(CTxDB& txdb, const std::map<uint256, CTxIndex>& mapTestPool,
                      bool fBlock, bool fMiner, MapPrevTx& inputsRet, bool& fInvalid);
@@ -691,13 +701,13 @@ public:
     /** Sanity check previous transactions, then, if all checks succeed,
         mark them as spent by this transaction.
 
-        @param[in] inputs   Previous transactions (from FetchInputs)
-        @param[out] mapTestPool Keeps track of inputs that need to be updated on disk
-        @param[in] posThisTx    Position of this transaction on disk
+        @param[in] inputs	Previous transactions (from FetchInputs)
+        @param[out] mapTestPool	Keeps track of inputs that need to be updated on disk
+        @param[in] posThisTx	Position of this transaction on disk
         @param[in] pindexBlock
-        @param[in] fBlock   true if called from ConnectBlock
-        @param[in] fMiner   true if called from CreateNewBlock
-        @param[in] fStrictPayToScriptHash   true if fully validating p2sh transactions
+        @param[in] fBlock	true if called from ConnectBlock
+        @param[in] fMiner	true if called from CreateNewBlock
+        @param[in] fStrictPayToScriptHash	true if fully validating p2sh transactions
         @return Returns true if all checks succeed
      */
     bool ConnectInputs(CTxDB& txdb, MapPrevTx inputs,
@@ -856,6 +866,8 @@ public:
 
     // memory only
     mutable std::vector<uint256> vMerkleTree;
+    //Tranz
+    //uint256 hashBlock;
 
     // Denial-of-service detection:
     mutable int nDoS;
@@ -901,6 +913,8 @@ public:
         vchBlockSig.clear();
         vMerkleTree.clear();
         nDoS = 0;
+        //Tranz
+        //hashBlock = 0;
     }
 
     bool IsNull() const
@@ -908,7 +922,7 @@ public:
         return (nBits == 0);
     }
 
-    uint256 GetHash() const
+    uint256 GetHash(bool fRehash=false) const
     {
         uint256 thash;
         void * scratchbuff = scrypt_buffer_alloc();
@@ -1106,7 +1120,7 @@ public:
     bool ReadFromDisk(const CBlockIndex* pindex, bool fReadTransactions=true);
     bool SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew);
     bool AddToBlockIndex(unsigned int nFile, unsigned int nBlockPos);
-    bool CheckBlock(bool fCheckPOW=true, bool fCheckMerkleRoot=true) const;
+    bool CheckBlock(bool fCheckPOW=true, bool fCheckMerkleRoot=true, bool fCheckSig=true) const;
     bool AcceptBlock();
     bool GetCoinAge(uint64& nCoinAge) const; // ppcoin: calculate total coin age spent in block
     bool SignBlock(const CKeyStore& keystore);
@@ -1143,7 +1157,7 @@ public:
     int64 nMoneySupply;
 
     unsigned int nFlags;  // ppcoin: block index flags
-    enum
+    enum  
     {
         BLOCK_PROOF_OF_STAKE = (1 << 0), // is proof-of-stake block
         BLOCK_STAKE_ENTROPY  = (1 << 1), // entropy bit for stake modifier
@@ -1359,6 +1373,9 @@ public:
 /** Used to marshal pointers into hashes for db storage. */
 class CDiskBlockIndex : public CBlockIndex
 {
+private:
+   uint256 blockHash;
+
 public:
     uint256 hashPrev;
     uint256 hashNext;
@@ -1367,6 +1384,7 @@ public:
     {
         hashPrev = 0;
         hashNext = 0;
+        blockHash = 0;
     }
 
     explicit CDiskBlockIndex(CBlockIndex* pindex) : CBlockIndex(*pindex)
@@ -1412,6 +1430,9 @@ public:
 
     uint256 GetBlockHash() const
     {
+       if (fUseFastIndex && (nTime < GetAdjustedTime() - 12 * nMaxClockDrift) && blockHash != 0)
+          return blockHash;
+
         CBlock block;
         block.nVersion        = nVersion;
         block.hashPrevBlock   = hashPrev;
@@ -1419,7 +1440,8 @@ public:
         block.nTime           = nTime;
         block.nBits           = nBits;
         block.nNonce          = nNonce;
-        return block.GetHash();
+        const_cast<CDiskBlockIndex*>(this)->blockHash = block.GetHash();
+        return blockHash;
     }
 
 

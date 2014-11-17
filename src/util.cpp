@@ -82,6 +82,7 @@ bool fNoListen = false;
 bool fLogTimestamps = false;
 CMedianFilter<int64> vTimeOffsets(200,0);
 bool fReopenDebugLog = false;
+bool fStakeGen = true;
 
 /* Shared between getmininginfo and the Qt client */
 long long nLastWalletStakeTime = 0;

@@ -35,7 +35,6 @@ typedef unsigned long long  uint64;
 static const int64 COIN = 1000000;
 static const int64 CENT = 10000;
 
-#define loop                for (;;)
 #define BEGIN(a)            ((char*)&(a))
 #define END(a)              ((char*)&((&(a))[1]))
 #define UBEGIN(a)           ((unsigned char*)&(a))
@@ -157,6 +156,7 @@ extern bool fTestNet;
 extern bool fNoListen;
 extern bool fLogTimestamps;
 extern bool fReopenDebugLog;
+extern bool fStakeGen;
 
 extern long long nLastWalletStakeTime;
 extern unsigned long long nMinWeightInputs;

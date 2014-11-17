@@ -2,7 +2,7 @@
 // Copyright (c) 2009-2012 The Bitcoin developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
-#include "db.h"
+#include "txdb.h"
 #include "walletdb.h"
 #include "bitcoinrpc.h"
 #include "net.h"
@@ -21,6 +21,7 @@
 #include <signal.h>
 #endif
 
+
 using namespace std;
 using namespace boost;
 
@@ -29,7 +30,9 @@ CClientUIInterface uiInterface;
 bool fConfChange;
 bool fEnforceCanonical;
 enum Checkpoints::CPMode CheckpointsMode;
+bool fUseFastIndex;
 unsigned int nDerivationMethodIndex;
+unsigned int nMinerSleep;
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -224,10 +227,9 @@ std::string HelpMessage()
 {
     string strUsage = _("Options:") + "\n" +
         "  -?                     " + _("This help message") + "\n" +
-        "  -conf=<file>           " + _("Specify configuration file (default: CapitalCoin.conf)") + "\n" +
-        "  -pid=<file>            " + _("Specify pid file (default: CapitalCoind.pid)") + "\n" +
-        "  -gen                   " + _("Generate coins") + "\n" +
-        "  -gen=0                 " + _("Don't generate coins") + "\n" +
+        "  -conf=<file>           " + _("Specify configuration file (default: orbitcoin.conf)") + "\n" +
+        "  -pid=<file>            " + _("Specify pid file (default: orbitcoind.pid)") + "\n" +
+        //"  -stakegen=<n>          " + _("Generate coin stakes (default: 1 = enabled)") + "\n" +
         "  -datadir=<dir>         " + _("Specify data directory") + "\n" +
         "  -dbcache=<n>           " + _("Set database cache size in megabytes (default: 25)") + "\n" +
         "  -dblogsize=<n>         " + _("Set database disk log size in megabytes (default: 100)") + "\n" +
@@ -357,7 +359,11 @@ bool AppInit2()
 
     // ********************************************************* Step 2: parameter interactions
 
-    fTestNet = GetBoolArg("-testnet");
+    fUseFastIndex = GetBoolArg("-fastindex", true);
+    /* Polling delay for stake mining, in milliseconds */
+    nMinerSleep = GetArg("-minersleep", 500);
+	
+	fTestNet = GetBoolArg("-testnet");
     if (fTestNet) {
         SoftSetBoolArg("-irc", true);
     }
@@ -497,6 +503,9 @@ bool AppInit2()
         if (!ParseMoney(mapArgs["-mininput"], nMinimumInputValue))
             return InitError(strprintf(_("Invalid amount for -mininput=<amount>: '%s'"), mapArgs["-mininput"].c_str()));
     }
+
+    /* Controls proof-of-stake generation */
+    fStakeGen = GetBoolArg("-stakegen", true);
 
     // ********************************************************* Step 4: application initialization: dir lock, daemonize, pidfile, debug log
 
@@ -881,6 +890,7 @@ bool AppInit2()
             LoadExternalBlockFile(file);
             RenameOver(pathBootstrap, pathBootstrapOld);
         }
+		exit(0);
     }
 
     // ********************************************************* Step 10: load peers

@@ -5,7 +5,7 @@
 #include <boost/assign/list_of.hpp>
 
 #include "kernel.h"
-#include "db.h"
+#include "txdb.h"
 
 using namespace std;
 
@@ -26,9 +26,10 @@ static std::map<int, unsigned int> mapStakeModifierCheckpoints =
         ( 191250, 0xbecba632u )
         ( 209701, 0xe7c7e2f0u )
         ( 224167, 0xb52fefd2u )
-	( 230374, 0xde066ac1u )
-	( 254847, 0x66fa564fu )
-	( 332710, 0x84d572b0u )
+        ( 230374, 0xde066ac1u )
+        ( 254847, 0x66fa564fu )
+        ( 332710, 0x84d572b0u )
+        ( 417460, 0x124f1261u )
 	;
 
 // Get time weight
@@ -293,6 +294,8 @@ bool CheckStakeKernelHash(unsigned int nBits, const CBlock& blockFrom, unsigned 
     CBigNum bnTargetPerCoinDay;
     bnTargetPerCoinDay.SetCompact(nBits);
     int64 nValueIn = txPrev.vout[prevout.n].nValue;
+	
+	uint256 hashBlockFrom = blockFrom.GetHash();
 
     // v0.3 protocol kernel hash weight starts from 0 at the 30-day min age
     // this change increases active coins participating the hash and helps
@@ -306,7 +309,7 @@ bool CheckStakeKernelHash(unsigned int nBits, const CBlock& blockFrom, unsigned 
     int nStakeModifierHeight = 0;
     int64 nStakeModifierTime = 0;
 
-    if (!GetKernelStakeModifier(blockFrom.GetHash(), nStakeModifier, nStakeModifierHeight, nStakeModifierTime, fPrintProofOfStake))
+    if (!GetKernelStakeModifier(hashBlockFrom, nStakeModifier, nStakeModifierHeight, nStakeModifierTime, fPrintProofOfStake))
         return false;
     ss << nStakeModifier;
 
@@ -317,7 +320,7 @@ bool CheckStakeKernelHash(unsigned int nBits, const CBlock& blockFrom, unsigned 
         printf("CheckStakeKernelHash() : using modifier 0x%016"PRI64x" at height=%d timestamp=%s for block from height=%d timestamp=%s\n",
             nStakeModifier, nStakeModifierHeight,
             DateTimeStrFormat(nStakeModifierTime).c_str(),
-            mapBlockIndex[blockFrom.GetHash()]->nHeight,
+            mapBlockIndex[hashBlockFrom]->nHeight,
             DateTimeStrFormat(blockFrom.GetBlockTime()).c_str());
         printf("CheckStakeKernelHash() : check protocol=%s modifier=0x%016"PRI64x" nTimeBlockFrom=%u nTxPrevOffset=%u nTimeTxPrev=%u nPrevout=%u nTimeTx=%u hashProof=%s\n",
             "0.3",
@@ -334,7 +337,7 @@ bool CheckStakeKernelHash(unsigned int nBits, const CBlock& blockFrom, unsigned 
         printf("CheckStakeKernelHash() : using modifier 0x%016"PRI64x" at height=%d timestamp=%s for block from height=%d timestamp=%s\n",
             nStakeModifier, nStakeModifierHeight, 
             DateTimeStrFormat(nStakeModifierTime).c_str(),
-            mapBlockIndex[blockFrom.GetHash()]->nHeight,
+            mapBlockIndex[hashBlockFrom]->nHeight,
             DateTimeStrFormat(blockFrom.GetBlockTime()).c_str());
         printf("CheckStakeKernelHash() : pass protocol=%s modifier=0x%016"PRI64x" nTimeBlockFrom=%u nTxPrevOffset=%u nTimeTxPrev=%u nPrevout=%u nTimeTx=%u hashProof=%s\n",
             "0.3",
@@ -360,8 +363,11 @@ bool CheckProofOfStake(const CTransaction& tx, unsigned int nBits, uint256& hash
     CTxIndex txindex;
     if (!txPrev.ReadFromDisk(txdb, txin.prevout, txindex))
         return tx.DoS(1, error("CheckProofOfStake() : INFO: read txPrev failed"));  // previous transaction not in main chain, may occur during initial download
-    txdb.Close();
 
+#ifndef USE_LEVELDB
+		txdb.Close();
+#endif
+	
     // Verify signature
     if (!VerifySignature(txPrev, tx, 0, true, 0))
         return tx.DoS(100, error("CheckProofOfStake() : VerifySignature failed on coinstake %s", tx.GetHash().ToString().c_str()));

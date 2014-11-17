@@ -3,13 +3,15 @@
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include "txdb.h"
 #include "wallet.h"
 #include "walletdb.h"
 #include "crypter.h"
 #include "ui_interface.h"
 #include "base58.h"
-#include "coincontrol.h" 
 #include "kernel.h"
+#include "coincontrol.h"
+#include <boost/algorithm/string/replace.hpp>
 
 using namespace std;
 extern int nStakeMaxAge;
@@ -89,6 +91,11 @@ bool CWallet::LoadKeyMetadata(const CPubKey &pubkey, const CKeyMetadata &meta)
 
     mapKeyMetadata[pubkey.GetID()] = meta;
     return true;
+}
+
+bool CWallet::LoadCryptedKey(const CPubKey &vchPubKey, const std::vector<unsigned char> &vchCryptedSecret)
+{
+    return CCryptoKeyStore::AddCryptedKey(vchPubKey, vchCryptedSecret);
 }
 
 bool CWallet::AddCScript(const CScript& redeemScript)
@@ -351,7 +358,7 @@ CWallet::TxItems CWallet::OrderedTxItems(std::list<CAccountingEntry>& acentries,
     return txOrdered;
 }
 
-void CWallet::WalletUpdateSpent(const CTransaction &tx)
+void CWallet::WalletUpdateSpent(const CTransaction &tx, bool fBlock)
 {
     // Anytime a signature is successfully verified, it's proof the outpoint is spent.
     // Update the wallet spent flag if it doesn't know due to wallet.dat being
@@ -375,9 +382,25 @@ void CWallet::WalletUpdateSpent(const CTransaction &tx)
                 }
             }
         }
+
+        if (fBlock)
+        {
+            uint256 hash = tx.GetHash();
+            map<uint256, CWalletTx>::iterator mi = mapWallet.find(hash);
+            CWalletTx& wtx = (*mi).second;
+
+            BOOST_FOREACH(const CTxOut& txout, tx.vout)
+            {
+                if (IsMine(txout))
+                {
+                    wtx.MarkUnspent(&txout - &tx.vout[0]);
+                    wtx.WriteToDisk();
+                    NotifyTransactionChanged(this, hash, CT_UPDATED);
+                }
+            }
+        }
     }
 }
-
 
 void CWallet::MarkDirty()
 {
@@ -445,7 +468,7 @@ bool CWallet::AddToWallet(const CWalletTx& wtxIn)
                 }
                 else
                     printf("AddToWallet() : found %s in block %s not in index\n",
-                           wtxIn.GetHash().ToString().substr(0,10).c_str(),
+                           hash.ToString().substr(0,10).c_str(),
                            wtxIn.hashBlock.ToString().c_str());
             }
         }
@@ -474,7 +497,7 @@ bool CWallet::AddToWallet(const CWalletTx& wtxIn)
         }
 
         //// debug print
-        printf("AddToWallet %s  %s%s\n", wtxIn.GetHash().ToString().substr(0,10).c_str(), (fInsertedNew ? "new" : ""), (fUpdated ? "update" : ""));
+        printf("AddToWallet %s  %s%s\n", hash.ToString().substr(0,10).c_str(), (fInsertedNew ? "new" : ""), (fUpdated ? "update" : ""));
 
         // Write to disk
         if (fInsertedNew || fUpdated)
@@ -500,7 +523,7 @@ bool CWallet::AddToWallet(const CWalletTx& wtxIn)
         }
 #endif
         // since AddToWallet is called directly for self-originating transactions, check for consumption of own coins
-        WalletUpdateSpent(wtx);
+        WalletUpdateSpent(wtx, (wtxIn.hashBlock != 0));
 
         // Notify UI of new or updated transaction
         NotifyTransactionChanged(this, hash, fInsertedNew ? CT_NEW : CT_UPDATED);
@@ -818,7 +841,13 @@ int CWallet::ScanForWalletTransactions(CBlockIndex* pindexStart, bool fUpdate)
         LOCK(cs_wallet);
         while (pindex)
         {
-            CBlock block;
+            // no need to read and scan block, if block was created before
+			// our wallet birthday (as adjusted for block time variability)
+			if (nTimeFirstKey && (pindex->nTime < (nTimeFirstKey - 7200))) {
+			    pindex = pindex->pnext;
+				continue;
+			}
+			CBlock block;
             block.ReadFromDisk(pindex, true);
             BOOST_FOREACH(CTransaction& tx, block.vtx)
             {
@@ -929,25 +958,23 @@ void CWalletTx::RelayWalletTransaction()
 
 void CWallet::ResendWalletTransactions(bool fForce)
 {
-    if (!fForce)
-	{
-		// Do this infrequently and randomly to avoid giving away
-		// that these are our transactions.
-		static int64 nNextTime;
-		if (GetTime() < nNextTime)
-			return;
-		bool fFirst = (nNextTime == 0);
-		nNextTime = GetTime() + GetRand(30 * 60);
-		if (fFirst)
-			return;
-		
-		// Only do it if there's been a new block since last time
-		static int64 nLastTime;
-		if (nTimeBestReceived < nLastTime)
-			 return;
-		nLastTime = GetTime();
-		
-	}
+    if(!fForce) {
+        // Do this infrequently and randomly to avoid giving away
+        // that these are our transactions.
+        static int64 nNextTime;
+        if(GetTime() < nNextTime)
+          return;
+        bool fFirst = (nNextTime == 0);
+        nNextTime = GetTime() + GetRand(30 * 60);
+        if(fFirst)
+          return;
+
+        // Only do it if there's been a new block since last time
+        static int64 nLastTime;
+        if(nTimeBestReceived < nLastTime)
+          return;
+        nLastTime = GetTime();
+    }
 
     // Rebroadcast any of our txes that aren't in a block yet
     printf("ResendWalletTransactions()\n");
@@ -2270,7 +2297,8 @@ void CWallet::FixSpentCoins(int& nMismatchFound, int64& nBalanceInQuestion, bool
             continue;
         for (unsigned int n=0; n < pcoin->vout.size(); n++)
         {
-            if (IsMine(pcoin->vout[n]) && pcoin->IsSpent(n) && (txindex.vSpent.size() <= n || txindex.vSpent[n].IsNull()))
+            bool fUpdated = false;
+			if (IsMine(pcoin->vout[n]) && pcoin->IsSpent(n) && (txindex.vSpent.size() <= n || txindex.vSpent[n].IsNull()))
             {
                 printf("FixSpentCoins found lost coin %sppc %s[%d], %s\n",
                     FormatMoney(pcoin->vout[n].nValue).c_str(), hash.ToString().c_str(), n, fCheckOnly? "repair not attempted" : "repairing");
@@ -2278,7 +2306,8 @@ void CWallet::FixSpentCoins(int& nMismatchFound, int64& nBalanceInQuestion, bool
                 nBalanceInQuestion += pcoin->vout[n].nValue;
                 if (!fCheckOnly)
                 {
-                    pcoin->MarkUnspent(n);
+                    fUpdated = true;
+					pcoin->MarkUnspent(n);
                     pcoin->WriteToDisk();
                 }
             }
@@ -2290,21 +2319,24 @@ void CWallet::FixSpentCoins(int& nMismatchFound, int64& nBalanceInQuestion, bool
                 nBalanceInQuestion += pcoin->vout[n].nValue;
                 if (!fCheckOnly)
                 {
-                    pcoin->MarkSpent(n);
+                    fUpdated = true;
+					pcoin->MarkSpent(n);
                     pcoin->WriteToDisk();
                 }
             }
-			NotifyTransactionChanged(this, hash, CT_UPDATED);
+			if (fUpdated)
+			    NotifyTransactionChanged(this, hash, CT_UPDATED);
 		}
 		
         if((pcoin->IsCoinBase() || pcoin->IsCoinStake()) && pcoin->GetDepthInMainChain() == 0)
         {
-           printf("FixSpentCoins %s orphaned generation tx %s\n", fCheckOnly ? "found" : "removed", hash.ToString().c_str());
            if (!fCheckOnly)
            {
              EraseFromWallet(hash);
-             NotifyTransactionChanged(this, hash, CT_UPDATED);
+             NotifyTransactionChanged(this, hash, CT_DELETED);
            }
+		   
+		   printf("FixSpentCoins %s orphaned generation tx %s\n", fCheckOnly ? "found" : "removed", hash.ToString().c_str());
         }
      }
 }
